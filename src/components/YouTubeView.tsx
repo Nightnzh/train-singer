@@ -1,7 +1,9 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import type { PitchData } from '../types/audio';
 import { PitchGauge } from './PitchGauge';
 import { PitchCanvas } from './PitchCanvas';
+import { KtvLyrics } from './KtvLyrics';
+import { YOUTUBE_KTV_LYRICS, parseLrc, type KtvLine } from '../utils/lyrics';
 import {
   extractYouTubeVideoId,
   formatTime,
@@ -19,6 +21,8 @@ import {
   Link,
   ChevronRight,
   Gauge,
+  FileText,
+  X,
 } from 'lucide-react';
 
 interface YouTubeViewProps {
@@ -81,6 +85,17 @@ export const YouTubeView: React.FC<YouTubeViewProps> = ({
   const [isLooping, setIsLooping] = useState<boolean>(false);
   const [loopStart, setLoopStart] = useState<number | null>(null);
   const [loopEnd, setLoopEnd] = useState<number | null>(null);
+
+  // Custom LRC Lyrics State
+  const [customLrcLines, setCustomLrcLines] = useState<KtvLine[] | null>(null);
+  const [showLrcModal, setShowLrcModal] = useState<boolean>(false);
+  const [lrcInputText, setLrcInputText] = useState<string>('');
+
+  // Active KTV Lyrics: custom pasted LRC or built-in preset lyrics
+  const activeLyrics: KtvLine[] = useMemo(() => {
+    if (customLrcLines && customLrcLines.length > 0) return customLrcLines;
+    return YOUTUBE_KTV_LYRICS[currentVideoId] || [];
+  }, [customLrcLines, currentVideoId]);
 
   const playerRef = useRef<YTPlayer | null>(null);
   const animFrameRef = useRef<number | null>(null);
@@ -186,6 +201,7 @@ export const YouTubeView: React.FC<YouTubeViewProps> = ({
       setLoopStart(null);
       setLoopEnd(null);
       setIsLooping(false);
+      setCustomLrcLines(null);
     } else {
       alert('請輸入有效的 YouTube 影片網址或 11 碼 Video ID！');
     }
@@ -197,6 +213,32 @@ export const YouTubeView: React.FC<YouTubeViewProps> = ({
     setLoopStart(null);
     setLoopEnd(null);
     setIsLooping(false);
+    setCustomLrcLines(null);
+  };
+
+  const handleApplyLrc = () => {
+    if (!lrcInputText.trim()) {
+      setCustomLrcLines(null);
+      setShowLrcModal(false);
+      return;
+    }
+
+    const parsed = parseLrc(lrcInputText);
+    if (parsed.length === 0) {
+      alert('無法解析歌詞，請確保包含 [00:12.34] 時間戳記！');
+      return;
+    }
+
+    setCustomLrcLines(parsed);
+    setShowLrcModal(false);
+  };
+
+  const handleLoadExampleLrc = () => {
+    const example = `[00:02.00]示範 KTV 歌詞開始
+[00:06.50]這是一首自訂匯入的練唱歌
+[00:11.20]支援任何標準 LRC 時間標籤
+[00:16.80]現在跟著動態走字一起大聲唱`;
+    setLrcInputText(example);
   };
 
   const handleTogglePlay = () => {
@@ -470,8 +512,27 @@ export const YouTubeView: React.FC<YouTubeViewProps> = ({
               </button>
             )}
           </div>
+
+          {/* LRC Lyrics Modal Button */}
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowLrcModal(true)}
+              className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition border cursor-pointer ${
+                customLrcLines
+                  ? 'bg-amber-950/80 border-amber-500/60 text-amber-300 shadow-md shadow-amber-500/15'
+                  : 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-slate-200'
+              }`}
+              title="匯入或自訂 LRC 歌詞"
+            >
+              <FileText className="w-3.5 h-3.5 text-amber-400" />
+              <span>{customLrcLines ? '自訂歌詞 (已套用)' : '歌詞設定 (LRC)'}</span>
+            </button>
+          </div>
         </div>
       </div>
+
+      {/* Real KTV Dynamic Subtitles Component */}
+      <KtvLyrics lines={activeLyrics} playbackTime={playbackTime} theme="gold" />
 
       {/* 60 FPS Pitch Canvas (Synchronized with YouTube time) */}
       <div className="space-y-2">
@@ -494,6 +555,80 @@ export const YouTubeView: React.FC<YouTubeViewProps> = ({
           height={380}
         />
       </div>
+
+      {/* Custom LRC Lyrics Import Modal */}
+      {showLrcModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fadeIn">
+          <div className="relative w-full max-w-xl rounded-3xl bg-slate-900 border border-slate-800 p-6 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2">
+                <FileText className="w-5 h-5 text-amber-400" />
+                <h3 className="text-base font-bold text-white">匯入自訂 LRC 歌詞</h3>
+              </div>
+              <button
+                onClick={() => setShowLrcModal(false)}
+                className="p-1 rounded-lg text-slate-400 hover:text-white transition cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-400 leading-relaxed">
+              貼上標準 LRC 歌詞格式（每行包含 <code>[mm:ss.xx]</code> 時間戳記），系統將自動對齊 YouTube 影片產生逐字染色 KTV 字幕！
+            </p>
+
+            <textarea
+              rows={8}
+              value={lrcInputText}
+              onChange={(e) => setLrcInputText(e.target.value)}
+              placeholder="[00:12.30]第一句歌詞&#10;[00:16.80]第二句歌詞..."
+              className="w-full p-3 bg-slate-950 border border-slate-700/80 rounded-xl text-xs font-mono text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500 transition"
+            />
+
+            <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-slate-800">
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleLoadExampleLrc}
+                  className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium transition cursor-pointer"
+                >
+                  填入範例
+                </button>
+                {customLrcLines && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCustomLrcLines(null);
+                      setLrcInputText('');
+                      setShowLrcModal(false);
+                    }}
+                    className="px-3 py-1.5 rounded-lg bg-rose-950/70 hover:bg-rose-900 text-rose-300 text-xs font-medium transition cursor-pointer border border-rose-800/40"
+                  >
+                    恢復預設歌詞
+                  </button>
+                )}
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowLrcModal(false)}
+                  className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold transition cursor-pointer"
+                >
+                  取消
+                </button>
+                <button
+                  type="button"
+                  onClick={handleApplyLrc}
+                  className="px-5 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-yellow-500 hover:from-amber-400 hover:to-yellow-400 text-black text-xs font-bold shadow-lg shadow-amber-500/20 transition cursor-pointer"
+                >
+                  套用歌詞
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

@@ -1,11 +1,13 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import type { Song, PitchData, PerformanceStats, HitRating, NoteTarget } from '../types/audio';
 import { SONGS } from '../data/songs';
 import { synth } from '../audio/SynthAudio';
 import { PitchCanvas } from './PitchCanvas';
 import { PitchGauge } from './PitchGauge';
 import { ScoreModal } from './ScoreModal';
-import { Play, Square, Flame, Music } from 'lucide-react';
+import { KtvLyrics } from './KtvLyrics';
+import { songNotesToKtvLines } from '../utils/lyrics';
+import { Play, Square, Flame } from 'lucide-react';
 
 interface SongViewProps {
   pitchData: PitchData | null;
@@ -52,6 +54,9 @@ export const SongView: React.FC<SongViewProps> = ({
     ...n,
     midi: n.midi + keyOffset,
   }));
+
+  // Generate synchronized KTV dual-line progressive lyrics
+  const songKtvLines = useMemo(() => songNotesToKtvLines(transposedNotes), [transposedNotes]);
 
   // Min and max MIDI for canvas view
   const minMidi = Math.min(...transposedNotes.map((n) => n.midi)) - 4;
@@ -298,35 +303,8 @@ export const SongView: React.FC<SongViewProps> = ({
         </div>
       </div>
 
-      {/* Synchronized Karaoke Lyrics Display */}
-      <div className="p-4 rounded-2xl bg-gradient-to-r from-slate-900 via-slate-950 to-slate-900 border border-slate-800 text-center shadow-inner">
-        <div className="text-xs text-slate-500 font-medium mb-1 flex items-center justify-center gap-1.5">
-          <Music className="w-3.5 h-3.5 text-sky-400" />
-          <span>動態歌詞同步</span>
-        </div>
-        <div className="text-2xl font-black tracking-wide text-slate-200 min-h-[36px] flex items-center justify-center gap-1">
-          {transposedNotes.map((note) => {
-            const isNoteActive =
-              playbackTime >= note.startTime && playbackTime <= note.startTime + note.duration;
-            const hasPassed = playbackTime > note.startTime + note.duration;
-
-            return (
-              <span
-                key={note.id}
-                className={`transition-all duration-100 ${
-                  isNoteActive
-                    ? 'text-transparent bg-clip-text bg-gradient-to-r from-amber-300 to-emerald-300 scale-125 font-extrabold px-1'
-                    : hasPassed
-                    ? 'text-slate-500 font-medium'
-                    : 'text-slate-300 font-normal'
-                }`}
-              >
-                {note.lyric || note.noteName}
-              </span>
-            );
-          })}
-        </div>
-      </div>
+      {/* Professional KTV Dynamic Lyrics Display */}
+      <KtvLyrics lines={songKtvLines} playbackTime={playbackTime} theme="gold" />
 
       {/* Pitch Gauge */}
       <PitchGauge
