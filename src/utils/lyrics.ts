@@ -350,3 +350,48 @@ export const YOUTUBE_KTV_LYRICS: Record<string, KtvLine[]> = {
     },
   ],
 };
+
+/**
+ * Search global synchronized LRC lyrics by song title / artist
+ */
+export async function searchOnlineLyrics(
+  query: string
+): Promise<{ trackName: string; artistName: string; lines: KtvLine[] } | null> {
+  if (!query || !query.trim()) return null;
+
+  try {
+    const res = await fetch(`https://lrclib.net/api/search?q=${encodeURIComponent(query.trim())}`);
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (!Array.isArray(data)) return null;
+
+    // Find the first result with synchronized lyrics
+    const matched = data.find((item) => item.syncedLyrics && item.syncedLyrics.length > 0);
+    if (!matched) return null;
+
+    const parsedLines = parseLrc(matched.syncedLyrics);
+    return {
+      trackName: matched.trackName,
+      artistName: matched.artistName,
+      lines: parsedLines,
+    };
+  } catch (err) {
+    console.error('Failed to search online lyrics:', err);
+    return null;
+  }
+}
+
+/**
+ * Shift all lines and words by a given offset in seconds (e.g. +1.5s or -0.5s)
+ */
+export function offsetKtvLines(lines: KtvLine[], offsetSeconds: number): KtvLine[] {
+  return lines.map((line) => ({
+    ...line,
+    startTime: Math.max(0, line.startTime + offsetSeconds),
+    endTime: Math.max(0, line.endTime + offsetSeconds),
+    words: line.words.map((w) => ({
+      ...w,
+      startTime: Math.max(0, w.startTime + offsetSeconds),
+    })),
+  }));
+}

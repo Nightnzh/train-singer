@@ -3,7 +3,13 @@ import type { PitchData } from '../types/audio';
 import { PitchGauge } from './PitchGauge';
 import { PitchCanvas } from './PitchCanvas';
 import { KtvLyrics } from './KtvLyrics';
-import { YOUTUBE_KTV_LYRICS, parseLrc, type KtvLine } from '../utils/lyrics';
+import {
+  YOUTUBE_KTV_LYRICS,
+  parseLrc,
+  searchOnlineLyrics,
+  offsetKtvLines,
+  type KtvLine,
+} from '../utils/lyrics';
 import {
   extractYouTubeVideoId,
   formatTime,
@@ -23,6 +29,10 @@ import {
   Gauge,
   FileText,
   X,
+  Search,
+  Loader2,
+  FastForward,
+  Rewind,
 } from 'lucide-react';
 
 interface YouTubeViewProps {
@@ -90,12 +100,20 @@ export const YouTubeView: React.FC<YouTubeViewProps> = ({
   const [customLrcLines, setCustomLrcLines] = useState<KtvLine[] | null>(null);
   const [showLrcModal, setShowLrcModal] = useState<boolean>(false);
   const [lrcInputText, setLrcInputText] = useState<string>('');
+  const [searchQuery, setSearchQuery] = useState<string>('');
+  const [isSearching, setIsSearching] = useState<boolean>(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
+  const [lyricOffset, setLyricOffset] = useState<number>(0);
 
-  // Active KTV Lyrics: custom pasted LRC or built-in preset lyrics
+  // Active KTV Lyrics: custom pasted LRC, searched LRC, or built-in preset lyrics, with offset compensation
   const activeLyrics: KtvLine[] = useMemo(() => {
-    if (customLrcLines && customLrcLines.length > 0) return customLrcLines;
-    return YOUTUBE_KTV_LYRICS[currentVideoId] || [];
-  }, [customLrcLines, currentVideoId]);
+    const base =
+      customLrcLines && customLrcLines.length > 0
+        ? customLrcLines
+        : YOUTUBE_KTV_LYRICS[currentVideoId] || [];
+    if (lyricOffset === 0) return base;
+    return offsetKtvLines(base, lyricOffset);
+  }, [customLrcLines, currentVideoId, lyricOffset]);
 
   const playerRef = useRef<YTPlayer | null>(null);
   const animFrameRef = useRef<number | null>(null);
@@ -239,6 +257,32 @@ export const YouTubeView: React.FC<YouTubeViewProps> = ({
 [00:11.20]支援任何標準 LRC 時間標籤
 [00:16.80]現在跟著動態走字一起大聲唱`;
     setLrcInputText(example);
+  };
+
+  const handleSearchOnline = async (queryText?: string) => {
+    const q = (queryText || searchQuery || currentTitle).trim();
+    if (!q) return;
+
+    setIsSearching(true);
+    setSearchError(null);
+    try {
+      const result = await searchOnlineLyrics(q);
+      if (result && result.lines.length > 0) {
+        setCustomLrcLines(result.lines);
+        setLyricOffset(0);
+        setShowLrcModal(false);
+      } else {
+        setSearchError(`未搜尋到「${q}」的動態同步歌詞，請嘗試簡化歌名或歌手名。`);
+      }
+    } catch {
+      setSearchError('搜尋歌詞時發生網路錯誤，請稍候重試。');
+    } finally {
+      setIsSearching(false);
+    }
+  };
+
+  const handleAdjustOffset = (delta: number) => {
+    setLyricOffset((prev) => Math.round((prev + delta) * 10) / 10);
   };
 
   const handleTogglePlay = () => {
@@ -513,26 +557,81 @@ export const YouTubeView: React.FC<YouTubeViewProps> = ({
             )}
           </div>
 
-          {/* LRC Lyrics Modal Button */}
-          <div className="flex items-center gap-2">
+          {/* LRC Lyrics Modal & Offset Controls */}
+          <div className="flex items-center gap-2 flex-wrap">
+            {activeLyrics.length > 0 && (
+              <div className="flex items-center gap-1 bg-slate-950/80 px-2 py-1 rounded-xl border border-slate-800 text-[11px]">
+                <span className="text-slate-500 font-medium">歌詞對位：</span>
+                <button
+                  onClick={() => handleAdjustOffset(-0.5)}
+                  className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 font-mono text-[10px] transition cursor-pointer"
+                  title="歌詞提前 0.5 秒"
+                >
+                  <Rewind className="w-3 h-3 inline mr-0.5" />
+                  -0.5s
+                </button>
+                <span className="text-amber-400 font-mono text-[10px] min-w-10 text-center">
+                  {lyricOffset > 0 ? `+${lyricOffset}` : lyricOffset === 0 ? '原時序' : lyricOffset}s
+                </span>
+                <button
+                  onClick={() => handleAdjustOffset(0.5)}
+                  className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 font-mono text-[10px] transition cursor-pointer"
+                  title="歌詞延後 0.5 秒"
+                >
+                  +0.5s
+                  <FastForward className="w-3 h-3 inline ml-0.5" />
+                </button>
+              </div>
+            )}
+
             <button
-              onClick={() => setShowLrcModal(true)}
+              onClick={() => {
+                setSearchQuery(currentTitle);
+                setShowLrcModal(true);
+              }}
               className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition border cursor-pointer ${
                 customLrcLines
                   ? 'bg-amber-950/80 border-amber-500/60 text-amber-300 shadow-md shadow-amber-500/15'
                   : 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-slate-200'
               }`}
-              title="匯入或自訂 LRC 歌詞"
+              title="搜尋線上歌詞或貼上 LRC"
             >
               <FileText className="w-3.5 h-3.5 text-amber-400" />
-              <span>{customLrcLines ? '自訂歌詞 (已套用)' : '歌詞設定 (LRC)'}</span>
+              <span>{customLrcLines ? '自訂歌詞 (已套用)' : '歌詞設定 / 搜尋'}</span>
             </button>
           </div>
         </div>
       </div>
 
       {/* Real KTV Dynamic Subtitles Component */}
-      <KtvLyrics lines={activeLyrics} playbackTime={playbackTime} theme="gold" />
+      {activeLyrics.length > 0 ? (
+        <KtvLyrics lines={activeLyrics} playbackTime={playbackTime} theme="gold" />
+      ) : (
+        /* Prompt when current YouTube track has no lyrics */
+        <div className="p-5 rounded-2xl bg-gradient-to-r from-slate-950 via-slate-900 to-slate-950 border border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-4 text-center sm:text-left">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-xl bg-amber-500/10 text-amber-400 flex items-center justify-center shrink-0">
+              <Search className="w-4 h-4" />
+            </div>
+            <div>
+              <div className="text-xs font-bold text-slate-200">當前影片尚未載入字幕</div>
+              <div className="text-[11px] text-slate-400">
+                YouTube 的畫面字幕受限於瀏覽器同源保護無法直接抓取，點擊右側可一鍵自動從網路搜尋對齊歌詞！
+              </div>
+            </div>
+          </div>
+          <button
+            onClick={() => {
+              setSearchQuery(currentTitle);
+              setShowLrcModal(true);
+            }}
+            className="px-4 py-2 bg-gradient-to-r from-amber-500 to-yellow-500 hover:from-amber-400 hover:to-yellow-400 text-black font-bold text-xs rounded-xl shadow-lg shadow-amber-500/20 transition whitespace-nowrap cursor-pointer flex items-center gap-1.5"
+          >
+            <Search className="w-3.5 h-3.5" />
+            <span>搜尋本曲動態歌詞</span>
+          </button>
+        </div>
+      )}
 
       {/* 60 FPS Pitch Canvas (Synchronized with YouTube time) */}
       <div className="space-y-2">
@@ -556,14 +655,15 @@ export const YouTubeView: React.FC<YouTubeViewProps> = ({
         />
       </div>
 
-      {/* Custom LRC Lyrics Import Modal */}
+      {/* Custom LRC Lyrics Import & Online Search Modal */}
       {showLrcModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fadeIn">
-          <div className="relative w-full max-w-xl rounded-3xl bg-slate-900 border border-slate-800 p-6 shadow-2xl space-y-4">
+          <div className="relative w-full max-w-xl rounded-3xl bg-slate-900 border border-slate-800 p-6 shadow-2xl space-y-5">
+            {/* Modal Header */}
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
               <div className="flex items-center gap-2">
                 <FileText className="w-5 h-5 text-amber-400" />
-                <h3 className="text-base font-bold text-white">匯入自訂 LRC 歌詞</h3>
+                <h3 className="text-base font-bold text-white">KTV 歌詞設定與搜尋</h3>
               </div>
               <button
                 onClick={() => setShowLrcModal(false)}
@@ -573,18 +673,54 @@ export const YouTubeView: React.FC<YouTubeViewProps> = ({
               </button>
             </div>
 
-            <p className="text-xs text-slate-400 leading-relaxed">
-              貼上標準 LRC 歌詞格式（每行包含 <code>[mm:ss.xx]</code> 時間戳記），系統將自動對齊 YouTube 影片產生逐字染色 KTV 字幕！
-            </p>
+            {/* Section 1: Auto Search Online Lyrics (Recommended) */}
+            <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800/80 space-y-2.5">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-slate-200 flex items-center gap-1.5">
+                  <Search className="w-3.5 h-3.5 text-amber-400" />
+                  <span>方式一：自動搜尋線上動態歌詞 (推薦)</span>
+                </span>
+                <span className="text-[10px] text-amber-400 font-medium">支援百萬首歌曲</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleSearchOnline()}
+                  placeholder="輸入歌名或歌手（例如 告白氣球、晴天 周杰倫）"
+                  className="flex-1 px-3 py-2 bg-slate-900 border border-slate-700/70 rounded-xl text-xs text-slate-100 placeholder:text-slate-500 focus:outline-none focus:border-amber-500"
+                />
+                <button
+                  type="button"
+                  disabled={isSearching}
+                  onClick={() => handleSearchOnline()}
+                  className="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-black font-bold text-xs rounded-xl transition flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                >
+                  {isSearching ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Search className="w-3.5 h-3.5" />}
+                  <span>{isSearching ? '搜尋中...' : '立即搜尋'}</span>
+                </button>
+              </div>
+              {searchError && (
+                <div className="text-[11px] text-rose-400 font-medium">⚠️ {searchError}</div>
+              )}
+            </div>
 
-            <textarea
-              rows={8}
-              value={lrcInputText}
-              onChange={(e) => setLrcInputText(e.target.value)}
-              placeholder="[00:12.30]第一句歌詞&#10;[00:16.80]第二句歌詞..."
-              className="w-full p-3 bg-slate-950 border border-slate-700/80 rounded-xl text-xs font-mono text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500 transition"
-            />
+            {/* Section 2: Paste manual LRC */}
+            <div className="space-y-2">
+              <div className="text-xs font-bold text-slate-300">
+                方式二：手動貼上標準 LRC 歌詞
+              </div>
+              <textarea
+                rows={6}
+                value={lrcInputText}
+                onChange={(e) => setLrcInputText(e.target.value)}
+                placeholder="[00:12.30]第一句歌詞&#10;[00:16.80]第二句歌詞..."
+                className="w-full p-3 bg-slate-950 border border-slate-700/80 rounded-xl text-xs font-mono text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500 transition"
+              />
+            </div>
 
+            {/* Modal Footer */}
             <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-slate-800">
               <div className="flex items-center gap-2">
                 <button
@@ -592,7 +728,7 @@ export const YouTubeView: React.FC<YouTubeViewProps> = ({
                   onClick={handleLoadExampleLrc}
                   className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium transition cursor-pointer"
                 >
-                  填入範例
+                  填入手動範例
                 </button>
                 {customLrcLines && (
                   <button
@@ -600,11 +736,12 @@ export const YouTubeView: React.FC<YouTubeViewProps> = ({
                     onClick={() => {
                       setCustomLrcLines(null);
                       setLrcInputText('');
+                      setLyricOffset(0);
                       setShowLrcModal(false);
                     }}
                     className="px-3 py-1.5 rounded-lg bg-rose-950/70 hover:bg-rose-900 text-rose-300 text-xs font-medium transition cursor-pointer border border-rose-800/40"
                   >
-                    恢復預設歌詞
+                    恢復預設伴奏歌詞
                   </button>
                 )}
               </div>
@@ -615,14 +752,14 @@ export const YouTubeView: React.FC<YouTubeViewProps> = ({
                   onClick={() => setShowLrcModal(false)}
                   className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold transition cursor-pointer"
                 >
-                  取消
+                  關閉
                 </button>
                 <button
                   type="button"
                   onClick={handleApplyLrc}
                   className="px-5 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-yellow-500 hover:from-amber-400 hover:to-yellow-400 text-black text-xs font-bold shadow-lg shadow-amber-500/20 transition cursor-pointer"
                 >
-                  套用歌詞
+                  套用手動貼上的歌詞
                 </button>
               </div>
             </div>
