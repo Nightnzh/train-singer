@@ -5,6 +5,7 @@ import { Navbar, type AppMode } from './components/Navbar';
 import { MonitorView } from './components/MonitorView';
 import { CoachView } from './components/CoachView';
 import { SongView } from './components/SongView';
+import { YouTubeView } from './components/YouTubeView';
 import { Heart } from 'lucide-react';
 
 export function App() {
@@ -98,6 +99,14 @@ export function App() {
 
         {activeMode === 'song' && (
           <SongView
+            pitchData={pitchData}
+            isMicActive={isMicActive}
+            onStartMic={handleStartMic}
+          />
+        )}
+
+        {activeMode === 'youtube' && (
+          <YouTubeView
             pitchData={pitchData}
             isMicActive={isMicActive}
             onStartMic={handleStartMic}
